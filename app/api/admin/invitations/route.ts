@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createInvitation, listInvitations } from "@/lib/zoho-creator";
+import { sendWhatsAppInvite } from "@/lib/genesys";
 
 export const maxDuration = 30;
 
@@ -39,7 +40,9 @@ export async function POST(req: NextRequest) {
       targetPosition,
       expiresInHours,
       createdBy,
-      notes
+      notes,
+      slotTime,
+      inviteChannel
     } = body as {
       candidateEmail?: string;
       candidateFullName?: string;
@@ -48,6 +51,8 @@ export async function POST(req: NextRequest) {
       expiresInHours?: number;
       createdBy?: string;
       notes?: string;
+      slotTime?: string;
+      inviteChannel?: string;
     };
 
     if (!candidateEmail || !/@/.test(candidateEmail)) {
@@ -61,6 +66,23 @@ export async function POST(req: NextRequest) {
         { error: "Valid createdBy (recruiter email) is required" },
         { status: 400 }
       );
+    }
+
+    const channel = inviteChannel === "WhatsApp" ? "WhatsApp" : "Email";
+
+    if (channel === "WhatsApp") {
+      if (!candidatePhone || !candidatePhone.trim()) {
+        return NextResponse.json(
+          { error: "Phone number is required for WhatsApp invitations" },
+          { status: 400 }
+        );
+      }
+      if (!candidatePhone.trim().startsWith("+")) {
+        return NextResponse.json(
+          { error: "Phone number must start with '+' and include country code for WhatsApp invitations (e.g. +96279...)" },
+          { status: 400 }
+        );
+      }
     }
 
     const ttlHours =
@@ -81,12 +103,26 @@ export async function POST(req: NextRequest) {
       targetPosition,
       createdBy,
       expiresAtIso: expiresAt,
-      notes
+      slotTimeIso: slotTime,
+      notes,
+      inviteChannel: channel
     });
 
     const origin =
       req.headers.get("origin") ?? `http://${req.headers.get("host") ?? "localhost:3000"}`;
     const url = `${origin}/start/${invitationCode}`;
+
+    let genesysResult = null;
+    if (channel === "WhatsApp" && candidatePhone) {
+      console.log(`[ROUTE] Triggering Genesys Outbound WhatsApp Invite to: ${candidatePhone}`);
+      genesysResult = await sendWhatsAppInvite({
+        candidateName: candidateFullName?.trim() || "Candidate",
+        candidatePhone: candidatePhone.trim(),
+        url,
+        pin,
+        targetPosition: targetPosition?.trim()
+      });
+    }
 
     return NextResponse.json({
       ok: true,
@@ -95,7 +131,9 @@ export async function POST(req: NextRequest) {
       candidateEmail,
       expiresAt,
       ttlHours,
-      url
+      url,
+      inviteChannel: channel,
+      genesysResult
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

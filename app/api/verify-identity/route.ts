@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { compareIdToSelfie } from "@/lib/aws-rekognition";
+import { compareIdToSelfie, detectTextInImage } from "@/lib/aws-rekognition";
+import { parseAndTranslateArabicID } from "@/lib/claude";
 
 export const maxDuration = 30;
 
@@ -33,15 +34,28 @@ export async function POST(req: NextRequest) {
     const idBuffer = Buffer.from(await idImage.arrayBuffer());
     const selfieBuffer = Buffer.from(await selfieImage.arrayBuffer());
 
-    const result = await compareIdToSelfie({
-      idImage: idBuffer,
-      selfieImage: selfieBuffer
-    });
+    const [compareResult, ocrLines] = await Promise.all([
+      compareIdToSelfie({
+        idImage: idBuffer,
+        selfieImage: selfieBuffer
+      }),
+      detectTextInImage(idBuffer)
+    ]);
 
-    return NextResponse.json({ ok: true, ...result });
+    let idInfo = null;
+    if (ocrLines && ocrLines.length > 0) {
+      idInfo = await parseAndTranslateArabicID(ocrLines);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      ...compareResult,
+      idInfo
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("/api/verify-identity error:", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

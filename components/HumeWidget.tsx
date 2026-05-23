@@ -133,15 +133,12 @@ function VoiceUI({
     const allMessages: SessionData["messages"] = [];
 
     messages.forEach((m) => {
-      // @ts-expect-error - Hume's union types don't narrow well
-      const mtype = m.type;
-      // @ts-expect-error
-      const content: string | undefined = m.message?.content;
-      // @ts-expect-error
+      const anyM = m as any;
+      const mtype = anyM.type;
+      const content: string | undefined = anyM.message?.content;
       const prosodyScores: Record<string, number> | undefined =
-        m.models?.prosody?.scores;
-      // @ts-expect-error
-      const receivedAtRaw = m.receivedAt;
+        anyM.models?.prosody?.scores;
+      const receivedAtRaw = anyM.receivedAt;
       const receivedAt =
         receivedAtRaw instanceof Date
           ? receivedAtRaw.getTime()
@@ -187,7 +184,14 @@ function VoiceUI({
     try {
       await connect({
         auth: { type: "accessToken", value: accessToken },
-        configId
+        configId,
+        sessionSettings: {
+          type: "session_settings",
+          systemPrompt: `You are Maya, an AI BPO screening interviewer for Centro CDX.
+The candidate's official translated ID name is "${candidateName}".
+At the very beginning of the screening, greet the candidate by saying EXACTLY: "Hello ${candidateName}, I have your official details. Is there a preferred name you'd like me to use during our screening?"
+Once they tell you their preferred name, note it, call them by that preferred name for the rest of the conversation, and then proceed with the BPO Customer Service screening. Evaluate their baseline English proficiency, fluency, composure, eq, and confidence.`
+        }
       });
     } catch (err) {
       console.error("Hume connect failed:", err);

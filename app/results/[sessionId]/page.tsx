@@ -287,15 +287,16 @@ export default function ResultsPage() {
         </section>
 
         {/* Session recording */}
-        {recordingBlob && meta.recording && (
+        {recordingBlob && (
           <section className="mt-8 rounded-lg border border-gray-200 bg-white p-6">
             <div className="flex items-baseline justify-between mb-3">
               <h2 className="text-lg font-semibold text-centro-primary">
                 Session recording
               </h2>
               <span className="text-xs text-centro-ink/60">
-                {(meta.recording.sizeBytes / 1_000_000).toFixed(1)} MB ·{" "}
-                {meta.recording.mimeType}
+                {meta.recording
+                  ? `${(meta.recording.sizeBytes / 1_000_000).toFixed(1)} MB · ${meta.recording.mimeType}`
+                  : `${(recordingBlob.size / 1_000_000).toFixed(1)} MB · ${recordingBlob.type || "video/webm"}`}
               </span>
             </div>
             <video

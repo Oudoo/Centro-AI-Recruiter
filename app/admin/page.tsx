@@ -576,11 +576,18 @@ export default function AdminCandidatesPage() {
                     <p className="text-xs text-centro-ink/55">
                       {s.candidateEmail || "—"}
                     </p>
-                    {s.reviewerOverrideApplied && (
-                      <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded mt-1 inline-block">
-                        OVERRIDDEN
-                      </span>
-                    )}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {s.reviewerOverrideApplied && (
+                        <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded inline-block">
+                          OVERRIDDEN
+                        </span>
+                      )}
+                      {s.discrepancyFlag && (
+                        <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded inline-block" title={`Name discrepancy flagged! CV: "${s.cvName}" vs ID name.`}>
+                          ⚠️ NAME MISMATCH
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-centro-ink/65 tabular-nums">
                     {s.completedTime

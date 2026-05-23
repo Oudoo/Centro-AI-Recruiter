@@ -42,6 +42,7 @@ export default function CandidateDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [overrideOpen, setOverrideOpen] = useState(false);
+  const [localUrl, setLocalUrl] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -60,6 +61,36 @@ export default function CandidateDetailPage() {
   useEffect(() => {
     if (sessionId) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  useEffect(() => {
+    let active = true;
+    let urlToCleanup: string | null = null;
+
+    if (sessionId) {
+      import("@/lib/recording")
+        .then(({ loadRecording }) => {
+          return loadRecording(sessionId);
+        })
+        .then((blob) => {
+          if (!active) return;
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            urlToCleanup = url;
+            setLocalUrl(url);
+          }
+        })
+        .catch((err) => {
+          console.warn("Could not load local recording from IndexedDB:", err);
+        });
+    }
+
+    return () => {
+      active = false;
+      if (urlToCleanup) {
+        URL.revokeObjectURL(urlToCleanup);
+      }
+    };
   }, [sessionId]);
 
   if (loading) {
@@ -183,6 +214,18 @@ export default function CandidateDetailPage() {
         </div>
       </div>
 
+      {session.discrepancyFlag && (
+        <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-5 text-sm text-rose-900 flex items-start gap-3 shadow-sm animate-fade-in">
+          <span className="text-2xl mt-0.5" role="img" aria-label="warning">⚠️</span>
+          <div>
+            <h3 className="font-bold text-rose-950">Name Discrepancy Flagged</h3>
+            <p className="mt-1 text-rose-900/90 leading-relaxed">
+              The candidate's name extracted from their CV (<strong>{session.cvName || "Unknown"}</strong>) does not match the English transliteration from their verified National ID card (<strong>{session.candidateName || "Unknown"}</strong>). This Levenshtein similarity is below 75% and may require manual screening or document review.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Overall + recording side-by-side */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">
         {/* Overall score */}
@@ -225,10 +268,24 @@ export default function CandidateDetailPage() {
 
         {/* Recording */}
         <div className="lg:col-span-3 rounded-lg border border-gray-200 bg-white p-6">
-          <h2 className="text-base font-semibold text-centro-primary mb-3">
-            Session recording
+          <h2 className="text-base font-semibold text-centro-primary mb-3 flex items-center justify-between">
+            <span>Session recording</span>
+            {localUrl && (
+              <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded animate-pulse">
+                Local IndexedDB Blob
+              </span>
+            )}
           </h2>
-          {session.recordingUrl ? (
+          {localUrl ? (
+            <div className="aspect-video rounded-md overflow-hidden bg-black border border-gray-200 relative">
+              <video
+                src={localUrl}
+                controls
+                playsInline
+                className="w-full h-full object-cover"
+              />
+            </div>
+          ) : session.recordingUrl ? (
             <>
               <div className="aspect-video rounded-md overflow-hidden bg-black flex items-center justify-center">
                 <a
@@ -248,8 +305,11 @@ export default function CandidateDetailPage() {
               </p>
             </>
           ) : (
-            <div className="aspect-video rounded-md bg-gray-50 border border-gray-200 flex items-center justify-center text-sm text-centro-ink/55">
-              No recording linked to this session yet.
+            <div className="aspect-video rounded-md bg-gray-50 border border-gray-200 flex flex-col items-center justify-center text-sm text-centro-ink/55 gap-2 p-4 text-center">
+              <span>No remote recording linked to this session yet.</span>
+              <span className="text-xs text-centro-ink/40">
+                If you performed the screening on this browser, the recording is saved locally in IndexedDB under this session's ID.
+              </span>
             </div>
           )}
         </div>

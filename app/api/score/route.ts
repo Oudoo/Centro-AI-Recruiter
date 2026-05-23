@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scoreScreening } from "@/lib/claude";
-import { analyzeFaceFrames, aggregateFaceTimeline, type FaceFrame } from "@/lib/hume-face";
-import { syncScreeningSession } from "@/lib/zoho-creator";
+import { analyzeFaceFrames, aggregateFaceTimeline, type FaceFrame } from "@/lib/claude-face";
+import { syncScreeningSession, type ScreeningSessionRow } from "@/lib/zoho-creator";
+import { getNameSimilarity } from "@/lib/fuzzy";
+import { saveLocalSession } from "@/lib/local-db";
 
 export const maxDuration = 300; // Vercel: allow up to 5 minutes for face batch + Claude
 
@@ -20,7 +22,8 @@ export async function POST(req: NextRequest) {
       faceFrames,
       durationSec,
       humeChatId,
-      verification
+      verification,
+      cvName
     } = body as {
       candidateName?: string;
       candidateEmail?: string;
@@ -37,7 +40,14 @@ export async function POST(req: NextRequest) {
         verified: boolean;
         confidence: number;
         method?: string;
+        idInfo?: {
+          idNameArabic?: string;
+          idNameEnglish?: string;
+          nationalId?: string;
+          dob?: string;
+        } | null;
       } | null;
+      cvName?: string;
     };
 
     if (!transcript || transcript.trim().length < 20) {
@@ -76,6 +86,63 @@ export async function POST(req: NextRequest) {
       faceTimeline
     });
 
+    // Fuzzy name matching between CV name and transliterated National ID name
+    const cvNameClean = cvName ? cvName.trim() : "";
+    const idNameEnglish = verification?.idInfo?.idNameEnglish || candidateName || "";
+    let discrepancyFlag = false;
+    if (cvNameClean && idNameEnglish) {
+      const similarity = getNameSimilarity(cvNameClean, idNameEnglish);
+      if (similarity < 75) {
+        discrepancyFlag = true;
+      }
+    }
+
+    // Write to local file-based database first (Primary)
+    const sessionId = body.sessionId || `session-${Date.now()}`;
+    const localSession: ScreeningSessionRow = {
+      id: sessionId,
+      candidateName: candidateName ?? "Candidate",
+      candidateEmail: candidateEmail ?? "",
+      candidatePhone: candidatePhone ?? "",
+      candidatePosition: candidatePosition ?? "Customer Success Agent (English)",
+      candidateExternalId: candidateExternalId ?? "",
+      candidateRecruitId: candidateRecruitId ?? "",
+      sessionStatus: "Completed",
+      startedTime: new Date(Date.now() - (durationSec ?? 0) * 1000).toISOString(),
+      completedTime: new Date().toISOString(),
+      overallScore: score.overall,
+      composureScore: score.composure.score,
+      eqScore: score.eq.score,
+      confidenceScore: score.confidence.score,
+      fluencyScore: score.fluency.score,
+      englishLevel: score.englishLevel,
+      passFailRecommendation: score.passFailRecommendation,
+      aiRationaleSummary: score.shortRationale,
+      aiRationaleFull: score.fullRationale,
+      fullTranscript: transcript,
+      recordingUrl: "",
+      reviewerOverrideApplied: false,
+      reviewerOverrideScore: 0,
+      reviewerOverrideReason: "",
+      reviewerEmail: "",
+      reviewedTime: "",
+      syncedToRecruit: false,
+      syncError: "",
+      inviteChannel: "WhatsApp",
+      verifiedIdentity: verification?.verified ?? false,
+      verificationConfidence: verification?.confidence ?? 0,
+      verificationMethod: verification?.method ?? "Face Matching",
+      cvName: cvNameClean,
+      discrepancyFlag
+    };
+
+    try {
+      await saveLocalSession(localSession);
+      console.log("Session saved to local DB successfully:", sessionId);
+    } catch (dbErr) {
+      console.error("Failed to save to local DB:", dbErr);
+    }
+
     // Push the completed session into Zoho Creator (Phase 1A).
     // Silent-fail by design so the candidate never sees a Zoho error block their report —
     // we surface the sync status in the response and the dashboard will retry.
@@ -91,15 +158,15 @@ export async function POST(req: NextRequest) {
           candidateRecruitId,
           candidateExternalId,
           sessionStatus: "Completed",
-          startedAtIso: new Date(
-            Date.now() - (durationSec ?? 0) * 1000
-          ).toISOString(),
-          completedAtIso: new Date().toISOString(),
+          startedAtIso: localSession.startedTime,
+          completedAtIso: localSession.completedTime,
           transcript,
           score,
           faceFramesAnalyzed,
           humeChatId,
-          verification
+          verification,
+          cvName: cvNameClean,
+          discrepancyFlag
         });
       } catch (err) {
         creatorSyncError = err instanceof Error ? err.message : String(err);
@@ -125,3 +192,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

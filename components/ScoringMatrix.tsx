@@ -4,17 +4,17 @@ import { activeRubric } from "@/lib/rubric";
 import type { ScoreOutput } from "@/lib/claude";
 
 function gradientFor(score: number): string {
-  if (score >= 4.0) return "from-emerald-500 to-emerald-700";
-  if (score >= 3.0) return "from-sky-500 to-sky-700";
-  if (score >= 2.0) return "from-amber-500 to-amber-700";
-  return "from-rose-500 to-rose-700";
+  if (score >= 4.0) return "from-teal-600 to-teal-800";
+  if (score >= 3.0) return "from-slate-500 to-slate-700";
+  if (score >= 2.0) return "from-stone-500 to-stone-700";
+  return "from-rose-600 to-rose-800";
 }
 
 function pillFor(score: number): string {
-  if (score >= 4.0) return "bg-emerald-100 text-emerald-900 ring-emerald-300";
-  if (score >= 3.0) return "bg-sky-100 text-sky-900 ring-sky-300";
-  if (score >= 2.0) return "bg-amber-100 text-amber-900 ring-amber-300";
-  return "bg-rose-100 text-rose-900 ring-rose-300";
+  if (score >= 4.0) return "bg-teal-50 text-teal-900 ring-teal-300";
+  if (score >= 3.0) return "bg-slate-50 text-slate-900 ring-slate-300";
+  if (score >= 2.0) return "bg-stone-50 text-stone-900 ring-stone-300";
+  return "bg-rose-50 text-rose-900 ring-rose-300";
 }
 
 function recommendationStyle(rec: ScoreOutput["passFailRecommendation"]): {

@@ -6,14 +6,15 @@ export const maxDuration = 20;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { invitationCode, pin } = body as {
+    const { invitationCode, email, pin } = body as {
       invitationCode?: string;
+      email?: string;
       pin?: string;
     };
 
-    if (!invitationCode || !pin) {
+    if (!invitationCode || !email || !pin) {
       return NextResponse.json(
-        { error: "invitationCode and pin are required" },
+        { error: "invitationCode, email, and pin are required" },
         { status: 400 }
       );
     }
@@ -46,11 +47,51 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (invitation.pin !== pin) {
+    if (
+      invitation.candidateEmail.toLowerCase() !== email.toLowerCase() ||
+      invitation.pin !== pin
+    ) {
       return NextResponse.json(
-        { error: "Incorrect PIN. Double-check the code your recruiter sent." },
+        { error: "Incorrect Email or PIN. Double-check the details your recruiter sent." },
         { status: 401 }
       );
+    }
+
+    // Schedule-gate check: 403 Too Early if < slotTime - 10m, 403 Expired if > slotTime + 10m
+    if (invitation.slotTime) {
+      const slotTimeMs = new Date(invitation.slotTime).getTime();
+      if (!Number.isNaN(slotTimeMs)) {
+        const nowMs = Date.now();
+        const tenMinutesMs = 10 * 60 * 1000;
+
+        if (nowMs < slotTimeMs - tenMinutesMs) {
+          const formattedTime = new Date(invitation.slotTime).toLocaleString("en-US", {
+            dateStyle: "medium",
+            timeStyle: "short"
+          });
+          return NextResponse.json(
+            {
+              error: "Too Early",
+              message: `Too Early: Your screening is scheduled for ${formattedTime}. You can only join starting 10 minutes before your slot.`
+            },
+            { status: 403 }
+          );
+        }
+
+        if (nowMs > slotTimeMs + tenMinutesMs) {
+          const formattedTime = new Date(invitation.slotTime).toLocaleString("en-US", {
+            dateStyle: "medium",
+            timeStyle: "short"
+          });
+          return NextResponse.json(
+            {
+              error: "Expired",
+              message: `Expired: Your scheduled screening slot was ${formattedTime}. This session has expired since you did not join within the 10-minute grace window.`
+            },
+            { status: 403 }
+          );
+        }
+      }
     }
 
     // PIN valid — issue a session ID and mark invitation as Used so it can't be replayed

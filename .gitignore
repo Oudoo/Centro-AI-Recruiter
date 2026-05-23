@@ -8,3 +8,12 @@ out
 *.log
 .vercel
 next-env.d.ts
+
+# Antigravity / context-dump exports — not source
+all_code.txt
+centro_code_context.txt
+results_page.txt
+screen_page.txt
+
+# Local file-based session DB (runtime state, not source)
+/data/

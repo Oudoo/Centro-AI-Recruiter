@@ -5,7 +5,23 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { BrandHeader } from "@/components/BrandHeader";
 import { getUserCameraStream, captureFrame } from "@/lib/face-capture";
 
-type Step = "id" | "selfie" | "verifying" | "result";
+type Step = "id" | "selfie" | "verifying" | "result" | "cv" | "ready";
+
+type CvUploadResult = {
+  parsed: {
+    fullName: string;
+    email: string;
+    phone: string;
+    education: Array<{ degree: string; institution: string; year: string }>;
+    workExperience: Array<{ company: string; role: string; duration: string; description: string }>;
+    skills: string[];
+    languages: string[];
+    certifications: string[];
+  };
+  nameSimilarity: number;
+  discrepancyFlag: boolean;
+} | null;
+
 type VerificationResult = {
   verified: boolean;
   confidence: number;
@@ -13,6 +29,12 @@ type VerificationResult = {
   hasFaceInId: boolean;
   hasFaceInSelfie: boolean;
   failureReason?: string;
+  idInfo?: {
+    idNameArabic: string;
+    idNameEnglish: string;
+    nationalId: string;
+    dob: string;
+  } | null;
 };
 
 export default function VerifyPage() {
@@ -32,6 +54,12 @@ export default function VerifyPage() {
   const [error, setError] = useState<string | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // CV Upload states
+  const [cvFile, setCvFile] = useState<File | null>(null);
+  const [cvUploading, setCvUploading] = useState(false);
+  const [cvError, setCvError] = useState<string | null>(null);
+  const [cvResult, setCvResult] = useState<CvUploadResult>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -136,7 +164,8 @@ export default function VerifyPage() {
           confidence: json.confidence,
           threshold: json.threshold,
           method: "AWS_Rekognition_CompareFaces",
-          verifiedAtIso: new Date().toISOString()
+          verifiedAtIso: new Date().toISOString(),
+          idInfo: json.idInfo
         })
       );
     } catch (err) {
@@ -146,11 +175,104 @@ export default function VerifyPage() {
   };
 
   const continueToScreening = () => {
+    const finalName = result?.idInfo?.idNameEnglish || candidateName;
     const params = new URLSearchParams({
-      name: candidateName,
-      email: candidateEmail
+      name: finalName,
+      email: candidateEmail,
+      cvName: cvResult?.parsed?.fullName || finalName
     });
     router.push(`/screen/${sessionId}?${params.toString()}`);
+  };
+
+  const uploadAndParseCv = async () => {
+    if (!cvFile) return;
+    setCvUploading(true);
+    setCvError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", cvFile);
+      fd.append("idNameEnglish", result?.idInfo?.idNameEnglish || candidateName);
+      fd.append("sessionId", sessionId);
+
+      const res = await fetch("/api/upload-cv", { method: "POST", body: fd });
+      const json = await res.json();
+      if (json.error) {
+        setCvError(json.error);
+        return;
+      }
+
+      const fullCvResult = {
+        parsed: json.parsed,
+        nameSimilarity: json.nameSimilarity,
+        discrepancyFlag: json.discrepancyFlag
+      };
+      setCvResult(fullCvResult);
+      sessionStorage.setItem(`centro-cv-${sessionId}`, JSON.stringify(fullCvResult));
+      setStep("ready");
+    } catch (err) {
+      setCvError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCvUploading(false);
+    }
+  };
+
+  const renderExtractedInfo = () => {
+    if (!result?.idInfo) return null;
+    const { idNameArabic, idNameEnglish, nationalId, dob } = result.idInfo;
+    if (!idNameArabic && !idNameEnglish && !nationalId && !dob) return null;
+    return (
+      <div className="mt-6 border border-gray-200 bg-gray-50/50 rounded-lg p-5">
+        <h3 className="text-xs font-bold text-centro-primary mb-3 uppercase tracking-wider">
+          Parsed National ID Credentials (Locked)
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+              Official Arabic Name (ID)
+            </label>
+            <input
+              type="text"
+              disabled
+              value={idNameArabic || "Not detected"}
+              className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100 text-centro-ink/75 cursor-not-allowed font-medium text-right font-arabic text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+              English Transliteration
+            </label>
+            <input
+              type="text"
+              disabled
+              value={idNameEnglish || "Not detected"}
+              className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100 text-centro-ink/75 cursor-not-allowed font-semibold text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+              14-Digit National ID Number
+            </label>
+            <input
+              type="text"
+              disabled
+              value={nationalId || "Not detected"}
+              className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100 text-centro-ink/75 cursor-not-allowed font-mono text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+              Derived Birth Date (YYMMDD Parsing)
+            </label>
+            <input
+              type="text"
+              disabled
+              value={dob || "Not detected"}
+              className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100 text-centro-ink/75 cursor-not-allowed font-mono text-sm"
+            />
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const retryFromStart = () => {
@@ -187,7 +309,14 @@ export default function VerifyPage() {
               style={{ width: selfieImage ? "100%" : "0%" }}
             />
           </div>
-          <ProgressDot label="Verify" active={step === "verifying" || step === "result"} done={step === "result"} />
+          <ProgressDot label="Verify" active={step === "verifying" || step === "result"} done={step === "result" || step === "cv" || step === "ready"} />
+          <div className="flex-1 h-0.5 bg-gray-200">
+            <div
+              className="h-full bg-centro-primary transition-all"
+              style={{ width: (step === "cv" || step === "ready") ? "100%" : "0%" }}
+            />
+          </div>
+          <ProgressDot label="CV Upload" active={step === "cv"} done={step === "ready" || !!cvResult} />
         </div>
 
         {/* STEP: ID DOCUMENT */}
@@ -388,11 +517,11 @@ export default function VerifyPage() {
                   <strong className="tabular-nums">
                     {result.confidence.toFixed(1)}%
                   </strong>{" "}
-                  (threshold: {result.threshold}%). You're ready to start the screening.
+                  (threshold: {result.threshold}%). You're ready to upload your CV.
                 </p>
                 <div className="mt-5 flex flex-wrap gap-3">
-                  <button onClick={continueToScreening} className="centro-btn">
-                    Start screening →
+                  <button onClick={() => setStep("cv")} className="centro-btn">
+                    Continue to CV Upload →
                   </button>
                 </div>
               </div>
@@ -413,7 +542,7 @@ export default function VerifyPage() {
                 <p className="mt-3 text-xs text-amber-900/75">
                   This doesn't necessarily mean you can't apply — it just means we
                   couldn't confirm the match automatically. You can retry with a clearer
-                  photo, or continue and we'll flag this for a recruiter to review
+                  photo, or continue to CV Upload and we'll flag this for a recruiter to review
                   manually.
                 </p>
                 <div className="mt-5 flex flex-wrap gap-3">
@@ -421,14 +550,173 @@ export default function VerifyPage() {
                     Try again with clearer photos
                   </button>
                   <button
-                    onClick={continueToScreening}
+                    onClick={() => setStep("cv")}
                     className="rounded-md border-2 border-amber-700 text-amber-900 px-6 py-3 font-medium hover:bg-amber-100"
                   >
-                    Continue anyway (flag for recruiter review)
+                    Continue anyway (Proceed to CV Upload)
                   </button>
                 </div>
               </div>
             )}
+            {renderExtractedInfo()}
+          </section>
+        )}
+
+        {/* STEP: CV UPLOAD */}
+        {step === "cv" && (
+          <section>
+            <h1 className="text-2xl font-bold text-centro-primary animate-fade-in">
+              Step 3 of 3 — Upload your CV
+            </h1>
+            <p className="mt-3 text-sm text-centro-ink/70 leading-relaxed">
+              Upload your CV so we can match it against your verified identity, parse your details, and prepare your profile for screening.
+            </p>
+
+            <label className="mt-6 block border-2 border-dashed border-gray-300 rounded-lg p-10 text-center cursor-pointer hover:border-centro-primary hover:bg-centro-primary/[0.02] transition-colors shadow-sm">
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) {
+                    setCvError(null);
+                    setCvFile(f);
+                  }
+                }}
+                className="hidden"
+              />
+              {cvFile ? (
+                <div>
+                  <div className="text-3xl text-centro-primary/60 mb-2">📄</div>
+                  <p className="font-semibold text-centro-primary">{cvFile.name}</p>
+                  <p className="text-xs text-centro-ink/55 mt-1">
+                    {(cvFile.size / 1_000_000).toFixed(1)} MB · Click to replace
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div className="text-4xl text-centro-primary/40 mb-2">📋</div>
+                  <p className="font-medium text-centro-primary">
+                    Drop your CV here or click to browse
+                  </p>
+                  <p className="text-xs text-centro-ink/55 mt-1">PDF or DOCX — under 10MB</p>
+                </div>
+              )}
+            </label>
+
+            {cvError && (
+              <div className="mt-4 p-3 rounded bg-rose-50 border border-rose-200 text-sm text-rose-900">
+                {cvError}
+              </div>
+            )}
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              {cvFile && (
+                <button
+                  onClick={uploadAndParseCv}
+                  disabled={cvUploading}
+                  className="centro-btn"
+                >
+                  {cvUploading ? "Parsing CV..." : "Upload & parse CV →"}
+                </button>
+              )}
+              <button
+                onClick={() => setStep("ready")}
+                className="px-4 py-2 rounded text-sm font-medium text-centro-ink/70 hover:bg-gray-50"
+              >
+                Skip CV upload (Proceed to screening) →
+              </button>
+            </div>
+            
+            <p className="mt-6 text-xs text-centro-ink/50 bg-gray-50/50 p-3 rounded border border-gray-150">
+              <strong>Privacy:</strong> your CV is processed securely for field extraction. Our BPO recruitment team uses this to verify matching credentials against your government ID.
+            </p>
+          </section>
+        )}
+
+        {/* STEP: READY */}
+        {step === "ready" && (
+          <section className="space-y-6">
+            <div className="space-y-2">
+              <h1 className="text-2xl font-bold text-centro-primary">
+                Ready to start screening
+              </h1>
+              <p className="text-sm text-centro-ink/70 leading-relaxed">
+                Your identity has been verified and your profile is loaded. When you click <strong>Start screening now</strong>, you will connect to Maya, our AI recruiter, for a voice conversation.
+              </p>
+            </div>
+
+            {/* Display discrepancy alert if any */}
+            {cvResult?.discrepancyFlag && (
+              <div className="p-4 rounded-lg bg-amber-50 border-2 border-amber-300 text-sm text-amber-900">
+                <strong className="text-amber-950 block mb-1">⚠ Name Discrepancy Flagged</strong>
+                The name on your CV (<strong>"{cvResult.parsed.fullName}"</strong>) does not match the name on your official ID (<strong>"{result?.idInfo?.idNameEnglish || candidateName}"</strong>) with high confidence (similarity: {cvResult.nameSimilarity.toFixed(0)}%). This has been flagged for manual recruiter audit, but you may still proceed.
+              </div>
+            )}
+
+            {/* Locked Dimmed fields from ID Card */}
+            {renderExtractedInfo()}
+
+            {/* Dimmed parsed CV Details Card */}
+            {cvResult && (
+              <div className="border border-gray-200 bg-gray-50/50 rounded-lg p-5">
+                <h3 className="text-xs font-bold text-centro-primary mb-3 uppercase tracking-wider">
+                  Extracted CV Details (Locked)
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+                      CV Full Name
+                    </label>
+                    <input
+                      type="text"
+                      disabled
+                      value={cvResult.parsed.fullName}
+                      className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100/80 text-centro-ink/65 cursor-not-allowed font-semibold text-sm focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+                      CV Email Address
+                    </label>
+                    <input
+                      type="text"
+                      disabled
+                      value={cvResult.parsed.email}
+                      className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100/80 text-centro-ink/65 cursor-not-allowed text-sm focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+                      CV Phone Number
+                    </label>
+                    <input
+                      type="text"
+                      disabled
+                      value={cvResult.parsed.phone}
+                      className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100/80 text-centro-ink/65 cursor-not-allowed text-sm focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-centro-ink/50 uppercase mb-1">
+                      CV Languages
+                    </label>
+                    <input
+                      type="text"
+                      disabled
+                      value={cvResult.parsed.languages.join(", ") || "English, Arabic"}
+                      className="w-full px-3 py-1.5 border border-gray-200 rounded bg-gray-100/80 text-centro-ink/65 cursor-not-allowed text-sm focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="pt-4">
+              <button onClick={continueToScreening} className="centro-btn px-8 py-4 text-lg font-bold w-full sm:w-auto shadow-md">
+                Start screening now →
+              </button>
+            </div>
           </section>
         )}
       </main>

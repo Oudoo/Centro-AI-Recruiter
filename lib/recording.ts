@@ -7,7 +7,7 @@
 
 const DB_NAME = "centro-ai-recruiter";
 const STORE_NAME = "recordings";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -19,7 +19,24 @@ function openDB(): Promise<IDBDatabase> {
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      // If the version is still wrong (e.g. browser has a higher version from
+      // a previous dev session), delete the DB and retry once.
+      console.warn("IndexedDB open failed, attempting recovery:", req.error);
+      const delReq = indexedDB.deleteDatabase(DB_NAME);
+      delReq.onsuccess = () => {
+        const retry = indexedDB.open(DB_NAME, DB_VERSION);
+        retry.onupgradeneeded = () => {
+          const db = retry.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+        retry.onsuccess = () => resolve(retry.result);
+        retry.onerror = () => reject(retry.error);
+      };
+      delReq.onerror = () => reject(req.error);
+    };
   });
 }
 

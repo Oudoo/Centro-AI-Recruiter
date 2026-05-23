@@ -8,7 +8,8 @@
 import {
   RekognitionClient,
   CompareFacesCommand,
-  DetectFacesCommand
+  DetectFacesCommand,
+  DetectTextCommand
 } from "@aws-sdk/client-rekognition";
 
 const client = new RekognitionClient({
@@ -18,6 +19,28 @@ const client = new RekognitionClient({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? ""
   }
 });
+
+/**
+ * Extracts OCR lines from an ID document image buffer.
+ */
+export async function detectTextInImage(image: Buffer): Promise<string[]> {
+  try {
+    const command = new DetectTextCommand({
+      Image: { Bytes: image }
+    });
+    const response = await client.send(command);
+    const textDetections = response.TextDetections ?? [];
+    // Capture only LINE types to avoid WORD-level duplicates
+    const lines = textDetections
+      .filter((t) => t.Type === "LINE")
+      .map((t) => t.DetectedText ?? "")
+      .filter(Boolean);
+    return lines;
+  } catch (err) {
+    console.error("AWS Rekognition DetectText error:", err);
+    return [];
+  }
+}
 
 export type FaceMatchResult = {
   verified: boolean;
